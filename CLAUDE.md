@@ -1,22 +1,48 @@
 # Auto Video Platform — 当前状态
 
+> 🔍 Hermes 审计时间：2026-05-24 22:38
+> 上次审计：2026-05-24 架构全面体检
+
+## ⚠️ 当前架构问题（需优先处理）
+
+### P0 — 分轨规则大面积违规
+自己定的"平台和内容分离"规则被打破。""AI照妖镜"" 硬编码在 8 个 .py 文件里：
+- pipeline.py, builders/assembly_engine.py, builders/components.py
+- builders/jianying_exporter.py, builders/storyboard_mapper.py
+- generators/script_engine.py, generators/script_generator.py
+- generate_ep2_assets.py
+
+**影响**：隆江自动化品牌配置无法接入，平台被锁死在 AI照妖镜。
+
+### P0 — 测试全部是假的
+4 个测试文件，0 个 assert。"跑一遍看崩不崩"不是测试。
+
+### P1 — components.py 已膨胀到 969 行
+每加一种视频风格，这个文件继续膨胀。需要组件注册机制。
+
+### P1 — DESIGN.md 路线图过时
+Phase 1 分析器状态与 CLAUDE.md 描述不一致。
+
+### 未提交改动
+5 个文件有未 commit 的修改，需立即提交。
+
+## ✅ 已解决的
+- app.py (Gradio UI) 已删除 ✓
+- git init 已完成 ✓
+- 分轨模板 episode_template.yaml 已创建 ✓
+
+---
+
 ## 环境
 
-- Windows 10 Pro, RTX 3060 Ti 8GB
-- Python 3.14 (C:\Python314), conda comfyui 环境
-- FFmpeg NVENC (硬件编码可用，但 **HEVC + setpts 滤镜 = 黑屏**)
-- Chromium headless 渲染器 (backend/chromium_renderer.py)
-- 素材目录: D:\隆江视频素材\ (34/35/36_raw.MP4，竖屏)
-- ComfyUI: http://127.0.0.1:8188 (图像生成)
+- Windows 10 Pro, RTX 3060 Ti 8GB, Python 3.14
+- ComfyUI: http://127.0.0.1:8188 (conda comfyui)
+- FFmpeg NVENC ⚠️ HEVC+setpts=黑屏, 可靠: eq/scale/crop/drawtext/fps
+- DeepSeek API (deepseek-v4-pro 防401)
+- 素材: D:\隆江视频素材\ (34/35/36_raw.MP4 竖屏)
+- 5 个文件有未提交改动
 
-## 当前状态
-
-**平台已跑通全链路** — 上传素材 → 分析 → 脚本 → TTS → 渲染 → MP4 输出均可运行。
-
-### 哪些是真实可用的
-
-| 模块 | 状态 | 说明 |
-|------|------|------|
+---|------|------|
 | 素材分析层 | ✅ 8个检测器已实现 | sharpness/composition/color/stability/face/hand/text/texture |
 | 方案生成层 | ✅ 可用 | script_generator.py (31KB) + script_engine.py (23KB) |
 | LLM Provider | ✅ DeepSeek+Qwen | config/llm_config.json，支持 fallback |
@@ -168,6 +194,55 @@ python test_all_stages.py
 问自己：这个改动是"这一集想要不一样"还是"所有集都应该这样"？
 - 单集需求 → 改 YAML
 - 平台需求 → 改 Python（谨慎，小步，测试）
+
+
+## Hermes 协作模式（铁律）
+
+### 角色分工
+- **Claude Code** = 主力程序员。拿到清晰任务 → 高效写代码。
+- **Hermes** = 项目记忆 + 架构监理。记住全局、审计偏差、给出方向。
+
+### 协作流程
+
+**Hermes 做的事（本文件由 Hermes 维护）：**
+- 定期审计代码 vs CLAUDE.md 承诺是否一致
+- 发现偏差 → 更新 CLAUDE.md 标出问题
+- 输出状态报告，写到本文件顶部
+
+**Claude 做的事：**
+- 每次会话开始 → 读本文件 → 了解真实状态
+- 根据状态报告决定优先级
+- 写代码前检查：有没有架构债务要先清理
+
+### 调度 Hermes
+```bash
+# Claude 在终端执行，同步获取结果
+hermes chat -q "自包含任务描述"
+
+# 示例
+hermes chat -q "审计 builders/components.py，报告拆分建议"
+hermes chat -q "检查所有.py中硬编码的'AI照妖镜'，报告文件和行号"
+hermes chat -q "对比 CLAUDE.md 待做清单和实际完成状态"
+```
+
+### 为什么不用 MCP 消息桥
+
+消息桥模式：Claude → `messages_send` → 等待 Hermes → `events_poll` 取结果。异步两跳。
+
+问题：
+1. **回合效率差**：发消息→等地→取结果，3个工具调用才完成一次对话。60秒的事变3分钟。
+2. **容错差**：Hermes 没反应时没有超时报错，Claude 干等不知道卡在哪里。
+3. **MCP 连接不稳定**：hermes mcp serve 进程常挂，重启后 session 不持久化。
+4. **调试困难**：出问题时不知道是 MCP 挂了、Hermes 没收到、还是回复丢失。
+
+命令行模式：`hermes chat -q "任务"` 一次同步调用，30-60秒出结果。简单直接。
+
+### 使用方式
+- 不要用 MCP 消息桥，直接命令行调用
+- Hermes 有持久记忆，不需要重复解释项目背景
+- Hermes 的审计报告会直接写进本文件
+
+---
 
 ## 开发纪律
 

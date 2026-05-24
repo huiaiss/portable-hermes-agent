@@ -111,6 +111,9 @@ class AssemblyEngine:
         # 4. 生成HyperFrames HTML
         html_path = self._build_html(storyboard)
 
+        # 4.5. 复制GSAP到output目录（Chromium渲染需要，避免CDN超时）
+        self._copy_gsap()
+
         # 5. 复制素材到output目录
         self._copy_assets(asset_plan)
 
@@ -609,6 +612,13 @@ class AssemblyEngine:
         return images
 
     # ─── Asset Management ─────────────────────────────────
+
+    def _copy_gsap(self):
+        """Copy local GSAP library to output dir so Chromium doesn't hit CDN."""
+        gsap_src = Path(__file__).parent / "static" / "gsap.min.js"
+        gsap_dst = self.output_dir / "gsap.min.js"
+        if gsap_src.exists() and not gsap_dst.exists():
+            shutil.copy2(gsap_src, gsap_dst)
 
     def _copy_assets(self, asset_plan: dict):
         """复制素材文件到output目录."""

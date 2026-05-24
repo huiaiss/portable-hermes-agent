@@ -226,6 +226,7 @@ class VideoPipeline:
         print("Stage 7/7: Chromium MP4 Render")
         print("━" * 40)
         mp4_path = ""
+        mp4_error = ""
         try:
             from builders.chromium_renderer import ChromiumRenderer
             renderer = ChromiumRenderer()
@@ -240,9 +241,11 @@ class VideoPipeline:
             file_size_mb = os.path.getsize(mp4_path) / (1024 * 1024)
             print(f"  Size: {file_size_mb:.1f}MB")
         except FileNotFoundError as e:
-            print(f"  Chromium render skipped (no browser found): {e}")
+            mp4_error = f"Browser not found: {e}"
+            print(f"  Chromium render skipped: {mp4_error}")
         except Exception as e:
-            print(f"  Chromium render failed: {e}")
+            mp4_error = f"{type(e).__name__}: {e}"
+            print(f"  Chromium render failed: {mp4_error}")
             import traceback
             traceback.print_exc()
 
@@ -270,6 +273,7 @@ class VideoPipeline:
             "audio_path": result.audio_path,
             "srt_path": result.srt_path,
             "mp4_path": mp4_path,
+            "mp4_error": mp4_error,
             "duration_s": result.total_duration_s,
             "output_dir": output_dir,
             "jianying_draft": jy_path,

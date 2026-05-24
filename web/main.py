@@ -2,7 +2,8 @@
 
 REST API wrapping the full pipeline: upload → analyze → script → preview → export.
 """
-import os, sys, json, uuid, tempfile, subprocess, shutil
+import os, sys, json, uuid, tempfile, subprocess, shutil, asyncio
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -57,7 +58,7 @@ config_loader = ConfigLoader()
 @app.get("/", response_class=HTMLResponse)
 async def editor_page(request: Request):
     """Main visual editor page."""
-    return templates.TemplateResponse("editor.html", {"request": request})
+    return templates.TemplateResponse("editor.html", {})
 
 
 # ═══════════════════════════════════════════════════════
@@ -235,7 +236,7 @@ async def get_preview(project_id: str):
 
 
 # ═══════════════════════════════════════════════════════
-# API: Export MP4
+# API: Export MP4 (via real Chromium + BGM pipeline)
 # ═══════════════════════════════════════════════════════
 
 @app.post("/api/export")
@@ -243,51 +244,113 @@ async def export_mp4(
     project_id: str = Form(...),
     fps: int = Form(24),
 ):
-    """Export HyperFrames HTML to MP4 via CLI."""
-    script_path = os.path.join(WORKSPACE, project_id, "script.json")
-    if not os.path.exists(script_path):
-        raise HTTPException(404, "Script not found.")
-
-    with open(script_path, encoding="utf-8") as f:
-        script = json.load(f)
-
-    assets_dir = os.path.join(WORKSPACE, project_id, "assets")
-    asset_files = sorted(os.listdir(assets_dir)) if os.path.exists(assets_dir) else []
-
-    # Build HyperFrames HTML file
-    html = _build_hyperframes_html(script, asset_files, project_id)
+    """Export assembled HTML to MP4 via ChromiumRenderer + bgm."""
     html_path = os.path.join(WORKSPACE, project_id, "index.html")
-    with open(html_path, "w", encoding="utf-8") as f:
-        f.write(html)
+    if not os.path.exists(html_path):
+        raise HTTPException(404, "HTML not found. Run /api/preview first.")
 
-    # Run HyperFrames CLI to render
     output_path = os.path.join(WORKSPACE, project_id, "output.mp4")
-    cmd = [
-        "npx", "hyperframes", "render",
-        "--input", html_path,
-        "--output", output_path,
-        "--fps", str(fps),
-        "--gpu",
-    ]
+    narration_path = os.path.join(WORKSPACE, project_id, "narration.mp3")
+    bgm_path = os.path.join(WORKSPACE, project_id, "bgm_mixed.mp3")
+
+    def _do_render():
+        from builders.chromium_renderer import ChromiumRenderer
+        renderer = ChromiumRenderer()
+        return renderer.render(
+            html_dir=os.path.join(WORKSPACE, project_id),
+            audio_path=narration_path if os.path.exists(narration_path) else "",
+            bgm_path=bgm_path if os.path.exists(bgm_path) else "",
+            duration_s=30,
+            output_path=output_path,
+        )
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, cwd=WORKSPACE)
-        if result.returncode != 0:
-            return {
-                "error": "Render failed",
-                "stderr": result.stderr[-2000:],
-                "stdout": result.stdout[-2000:],
-            }
-    except subprocess.TimeoutExpired:
-        return {"error": "Render timed out (>5 min)"}
-    except FileNotFoundError:
-        return {"error": "HyperFrames CLI not found. Install with: npm i -g hyperframes"}
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            await loop.run_in_executor(pool, _do_render)
+    except Exception as e:
+        return {"error": f"Render failed: {e}"}
 
     return {
         "project_id": project_id,
         "video_url": f"/api/video/{project_id}/output.mp4",
-        "size_mb": round(os.path.getsize(output_path) / (1024 * 1024), 1),
+        "size_mb": round(os.path.getsize(output_path) / (1024 * 1024), 1) if os.path.exists(output_path) else 0,
     }
+
+
+# ═══════════════════════════════════════════════════════
+# API: One-Click Full Pipeline
+# ═══════════════════════════════════════════════════════
+
+@app.post("/api/pipeline/run")
+async def run_full_pipeline(
+    files: list[UploadFile] = File(...),
+    video_type: str = Form("ai_flaw_detect"),
+    topic: str = Form(""),
+    bgm: bool = Form(True),
+):
+    """One-click: upload ref images → analyze → script → TTS → assets → BGM → MP4.
+
+    Returns the full pipeline result including video URL and metadata.
+    """
+    # Save uploaded files to a temp project dir
+    project_id = uuid.uuid4().hex[:8]
+    output_dir = os.path.join(WORKSPACE, "pipelines", project_id)
+    os.makedirs(output_dir, exist_ok=True)
+
+    ref_paths = []
+    for f in files:
+        safe_name = f.filename.replace(" ", "_")
+        path = os.path.join(output_dir, safe_name)
+        with open(path, "wb") as out:
+            out.write(await f.read())
+        ref_paths.append(path)
+
+    if not ref_paths:
+        raise HTTPException(400, "At least one reference image required")
+
+    ref_image = ref_paths[0]
+
+    # Run blocking pipeline in thread pool (Playwright sync API + asyncio don't mix)
+    def _run_pipeline():
+        from pipeline import VideoPipeline
+        pipeline_runner = VideoPipeline()
+        return pipeline_runner.run(
+            ref_image=ref_image,
+            video_type=video_type,
+            topic=topic or None,
+            output_dir=output_dir,
+            bgm=bgm,
+            skip_jianying=True,
+        )
+
+    try:
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            result = await loop.run_in_executor(pool, _run_pipeline)
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()[-2000:]}
+
+    return {
+        "project_id": project_id,
+        "video_url": f"/api/video-pipeline/{project_id}/output.mp4",
+        "html_url": f"/api/video-pipeline/{project_id}/index.html",
+        "duration_s": result.get("duration_s", 0),
+        "mp4_path": result.get("mp4_path", ""),
+        "mp4_error": result.get("mp4_error", ""),
+        "output_dir": output_dir,
+    }
+
+
+@app.get("/api/video-pipeline/{project_id}/{filename}")
+async def serve_pipeline_file(project_id: str, filename: str):
+    """Serve files from pipeline output directory."""
+    path = os.path.join(WORKSPACE, "pipelines", project_id, filename)
+    if not os.path.exists(path):
+        raise HTTPException(404, f"File not found: {filename}")
+    media_type = "video/mp4" if filename.endswith(".mp4") else "text/html"
+    return FileResponse(path, media_type=media_type)
 
 
 @app.get("/api/video/{project_id}/{filename}")

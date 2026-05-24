@@ -78,7 +78,7 @@ _HTML_PREAMBLE = """<!doctype html>
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=1080, height=1920" />
-  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js" crossorigin="anonymous"></script>
+  <script src="./gsap.min.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {

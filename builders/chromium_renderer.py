@@ -49,6 +49,9 @@ class ChromiumRenderer:
             bgm_path = os.path.abspath(bgm_path)
         output_path = os.path.abspath(output_path or os.path.join(html_dir, "output.mp4"))
 
+        # Ensure gsap.min.js is available locally (no CDN dependency)
+        self._ensure_local_gsap(html_dir)
+
         # 1. Start HTTP server
         self._start_server(html_dir, port)
         time.sleep(0.5)
@@ -104,11 +107,10 @@ class ChromiumRenderer:
             )
 
             page = context.new_page()
-            # Use domcontentloaded instead of networkidle — GSAP from CDN may
-            # hang "networkidle" on slow connections (especially in mainland China)
+            # Use domcontentloaded — GSAP is now local (no CDN), so this is fast
             page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            # Wait for GSAP to be available
-            page.wait_for_function("typeof gsap !== 'undefined'", timeout=15000)
+            # Wait for GSAP to be available (local file loads quickly)
+            page.wait_for_function("typeof gsap !== 'undefined'", timeout=10000)
 
             # Click once to unlock audio (autoplay parameter handles overlay + timeline)
             page.click("body", timeout=5000)
@@ -230,6 +232,18 @@ class ChromiumRenderer:
             return True
 
     # ─── Browser Detection ───────────────────────────────
+
+    @staticmethod
+    def _ensure_local_gsap(html_dir: str):
+        """Copy gsap.min.js into html_dir if not already present."""
+        gsap_dst = os.path.join(html_dir, "gsap.min.js")
+        if os.path.exists(gsap_dst):
+            return
+        # Try the builders/static copy first
+        gsap_src = os.path.join(os.path.dirname(__file__), "static", "gsap.min.js")
+        if os.path.exists(gsap_src):
+            import shutil as _shutil
+            _shutil.copy2(gsap_src, gsap_dst)
 
     @staticmethod
     def _find_browser() -> str:

@@ -36,6 +36,11 @@ class Beat:
     is_save_trigger: bool = False   # 是否是收藏诱因点
     is_share_trigger: bool = False  # 是否是转发诱因点
     is_comment_trigger: bool = False # 是否是评论引爆点
+    # Extended FrameCraft dimensions (from visual-hub pipeline_bridge)
+    caption: str = ""               # On-screen subtitle text per shot
+    how_to_shoot: str = ""          # Shooting instruction for production
+    tier: str = "L1"                # Shooting tier: L1(phone)/L2(pro)/L3(studio)
+    audio_l2_text: str = ""         # Alternate narration layer (B-roll)
 
 
 @dataclass
@@ -49,6 +54,15 @@ class Script:
     bgm_style: str                  # BGM风格
     checklist: str                  # 可截图保存的检查清单（收藏诱因）
     total_duration_s: float
+    # Extended FrameCraft dimensions (from visual-hub pipeline_bridge)
+    bgm_search_keywords: list[str] = field(default_factory=list)
+    bgm_tempo_bpm: str = ""
+    bgm_usage_tips: str = ""
+    composition_style: str = ""
+    model_direction: str = ""
+    differentiation: str = ""
+    key_features: list[str] = field(default_factory=list)
+    top_hook_types: list[str] = field(default_factory=list)
 
 
 # ─── Video Type Templates ───────────────────────────────────
